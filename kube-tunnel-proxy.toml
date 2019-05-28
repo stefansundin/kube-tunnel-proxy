@@ -1,0 +1,8 @@
+[[context]]
+name = "minikube"
+
+[[context.tunnel]]
+namespace  = "kube-system"
+selector   = "k8s-app=kubernetes-dashboard"
+pod_port   = 9090
+local_port = 8000

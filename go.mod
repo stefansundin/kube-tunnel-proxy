@@ -1,6 +1,7 @@
 module github.com/stefansundin/kube-tunnel-proxy
 
 require (
+	github.com/BurntSushi/toml v0.3.1
 	github.com/docker/spdystream v0.0.0-20181023171402-6480d4af844c // indirect
 	github.com/gogo/protobuf v1.2.0 // indirect
 	github.com/golang/protobuf v1.2.0 // indirect

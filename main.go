@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -14,13 +15,22 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/portforward"
 	"k8s.io/client-go/transport/spdy"
+
+	"github.com/BurntSushi/toml"
 )
 
+type Config struct {
+	Contexts []Context `toml:"context"`
+}
+type Context struct {
+	Name    string
+	Tunnels []Tunnel `toml:"tunnel"`
+}
 type Tunnel struct {
 	Namespace string
 	Selector  string
-	PodPort   int
-	LocalPort int
+	PodPort   int `toml:"pod_port"`
+	LocalPort int `toml:"local_port"`
 }
 
 type Logger struct {
@@ -34,25 +44,26 @@ func (this *Logger) Write(b []byte) (int, error) {
 }
 
 func main() {
-	config := map[string][]Tunnel{
-		"minikube": {
-			{
-				Namespace: "kube-system",
-				Selector:  "app=kubernetes-dashboard",
-				PodPort:   9090,
-				LocalPort: 8000,
-			},
-		},
+	tomlData, err := ioutil.ReadFile("kube-tunnel-proxy.toml")
+	if err != nil {
+		fmt.Println(err)
 	}
 
+	var config Config
+	_, err = toml.Decode(string(tomlData), &config)
+	if err != nil {
+		fmt.Println(err)
+	}
+	fmt.Println(config)
+
 	var wg sync.WaitGroup
-	for context, tunnels := range config {
-		fmt.Printf("[%s] Setting up %d tunnels.\n", context, len(tunnels))
+	for _, context := range config.Contexts {
+		fmt.Printf("[%s] Setting up %d tunnels.\n", context.Name, len(context.Tunnels))
 
 		cfg, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
 			clientcmd.NewDefaultClientConfigLoadingRules(),
 			&clientcmd.ConfigOverrides{
-				CurrentContext: context,
+				CurrentContext: context.Name,
 			}).ClientConfig()
 
 		if err != nil {
@@ -64,15 +75,15 @@ func main() {
 			panic(err.Error())
 		}
 
-		for _, tunnel := range tunnels {
+		for _, tunnel := range context.Tunnels {
 			wg.Add(1)
-			go PortForward(&wg, cfg, clientSet, &context, &tunnel)
+			go PortForward(&wg, cfg, clientSet, context.Name, tunnel)
 		}
 	}
 	wg.Wait()
 }
 
-func PortForward(wg *sync.WaitGroup, cfg *rest.Config, clientSet *kubernetes.Clientset, context *string, tunnel *Tunnel) {
+func PortForward(wg *sync.WaitGroup, cfg *rest.Config, clientSet *kubernetes.Clientset, context string, tunnel Tunnel) {
 	defer wg.Done()
 
 	pods, err := clientSet.CoreV1().
@@ -84,12 +95,12 @@ func PortForward(wg *sync.WaitGroup, cfg *rest.Config, clientSet *kubernetes.Cli
 		panic(err.Error())
 	}
 	if len(pods.Items) < 1 {
-		fmt.Printf("[%s] No pods found: %s.\n", *context, tunnel.Selector)
+		fmt.Printf("[%s] No pods found: %s.\n", context, tunnel.Selector)
 		return
 	}
 	podName := pods.Items[0].Name
 
-	fmt.Printf("[%s] Forwarding localhost:%d to pod %s:%d\n", *context, tunnel.LocalPort, podName, tunnel.PodPort)
+	fmt.Printf("[%s] Forwarding localhost:%d to pod %s:%d\n", context, tunnel.LocalPort, podName, tunnel.PodPort)
 
 	stopChan := make(chan struct{}, 1)
 	readyChan := make(chan struct{})
@@ -101,7 +112,7 @@ func PortForward(wg *sync.WaitGroup, cfg *rest.Config, clientSet *kubernetes.Cli
 	go func() {
 		<-signals
 		if stopChan != nil {
-			fmt.Printf("[%s] Stopped forwarding %s:%d.\n", *context, podName, tunnel.PodPort)
+			fmt.Printf("[%s] Stopped forwarding %s:%d.\n", context, podName, tunnel.PodPort)
 			close(stopChan)
 		}
 	}()
@@ -132,7 +143,7 @@ func PortForward(wg *sync.WaitGroup, cfg *rest.Config, clientSet *kubernetes.Cli
 		fmt.Sprintf("%d:%d", tunnel.LocalPort, tunnel.PodPort),
 	}
 	logger := &Logger{
-		Context: *context,
+		Context: context,
 		Tag:     fmt.Sprintf("%s:%d", podName, tunnel.LocalPort),
 	}
 
