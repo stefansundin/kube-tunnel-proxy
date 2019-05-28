@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"os/user"
 	"sync"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,15 +45,28 @@ func (this *Logger) Write(b []byte) (int, error) {
 }
 
 func main() {
-	tomlData, err := ioutil.ReadFile("kube-tunnel-proxy.toml")
+	configPath := "kube-tunnel-proxy.toml"
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		usr, err := user.Current()
+		if err != nil {
+			fmt.Println("Error: Could not locate your home directory.")
+			os.Exit(1)
+		}
+		configPath = fmt.Sprintf("%s/.kube-tunnel-proxy.toml", usr.HomeDir)
+	}
+
+	fmt.Printf("Loading config from: %s\n", configPath)
+	tomlData, err := ioutil.ReadFile(configPath)
 	if err != nil {
 		fmt.Println(err)
+		os.Exit(1)
 	}
 
 	var config Config
 	_, err = toml.Decode(string(tomlData), &config)
 	if err != nil {
 		fmt.Println(err)
+		os.Exit(1)
 	}
 	fmt.Println(config)
 
